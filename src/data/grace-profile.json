@@ -1,0 +1,56 @@
+{
+  "name": "Grace",
+  "analyzedAt": "2026-04-24",
+  "season": "Soft Autumn",
+  "undertone": "warm",
+  "seasonSummary": "Your warmth and depth shine in earthy, muted tones. Rich terracottas, warm olives, and deep caramels make your skin glow while cooler or icy shades tend to wash you out.",
+  "bestColors": [
+    { "name": "Terracotta", "hex": "#C2714F" },
+    { "name": "Warm Olive", "hex": "#8B8B4B" },
+    { "name": "Caramel", "hex": "#C68642" },
+    { "name": "Rust", "hex": "#B7410E" },
+    { "name": "Warm Taupe", "hex": "#967969" },
+    { "name": "Deep Teal", "hex": "#2E5E5E" },
+    { "name": "Chocolate", "hex": "#5C3D2E" },
+    { "name": "Cream", "hex": "#FFF8E7" }
+  ],
+  "avoidColors": [
+    { "name": "Icy Pink", "hex": "#F4D6DF" },
+    { "name": "Cool Lavender", "hex": "#C5AEE0" },
+    { "name": "Stark White", "hex": "#FFFFFF" },
+    { "name": "Neon Yellow", "hex": "#FFFF00" }
+  ],
+  "makeup": {
+    "foundationUndertone": "Warm golden — look for NC or NW shades with a yellow-peach base",
+    "eyeshadow": [
+      { "name": "Warm Bronze", "hex": "#8B6914" },
+      { "name": "Soft Terracotta", "hex": "#C67D5B" },
+      { "name": "Deep Espresso", "hex": "#3B1F0E" }
+    ],
+    "lipColors": [
+      { "name": "Warm Brick", "hex": "#9E3B2C" },
+      { "name": "Nude Caramel", "hex": "#C4855A" }
+    ],
+    "blush": { "name": "Peachy Coral", "hex": "#E8825A" }
+  },
+  "hair": {
+    "colorOptions": [
+      { "name": "Warm Chestnut", "hex": "#6B3728" },
+      { "name": "Golden Brunette", "hex": "#8B5E3C" },
+      { "name": "Caramel Highlights", "hex": "#C68642" }
+    ],
+    "styleNotes": [
+      "Soft waves and layers complement your warm, relaxed energy",
+      "Avoid cool ash or platinum tones — they fight your natural warmth",
+      "Balayage in warm golden-brown shades adds depth beautifully"
+    ]
+  },
+  "accessories": {
+    "metalTone": "gold",
+    "jewelryStyle": [
+      "Warm gold and bronze",
+      "Natural materials — wood, amber, tortoiseshell",
+      "Earthy gemstones — citrine, carnelian, tiger's eye"
+    ]
+  }
+}
