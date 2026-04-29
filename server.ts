@@ -98,6 +98,12 @@ function extFor(mime: string): string {
   return mime === 'image/png' ? '.png' : mime === 'image/webp' ? '.webp' : '.jpg'
 }
 
+/** Hard cap on how long we'll wait for the claude CLI to return. Cloudflare
+ *  quick tunnels disconnect at 100s; if Claude is genuinely stuck we'd rather
+ *  the server return a friendly error in <90s than have the client see a
+ *  raw network drop. */
+const CLAUDE_TIMEOUT_MS = 90_000
+
 async function analyzeWithClaude(
   photos: PhotoInput[],
   opts: { includeMakeup: boolean },
@@ -138,11 +144,27 @@ async function analyzeWithClaude(
 
       let stdout = ''
       let stderr = ''
+      let timedOut = false
+
+      // Hard timeout: SIGTERM first to let claude clean up, then SIGKILL 5s
+      // later as a last resort so a stuck CLI process doesn't pin a slot.
+      const timer = setTimeout(() => {
+        timedOut = true
+        proc.kill('SIGTERM')
+        setTimeout(() => {
+          if (!proc.killed) proc.kill('SIGKILL')
+        }, 5_000)
+      }, CLAUDE_TIMEOUT_MS)
 
       proc.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
       proc.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
 
       proc.on('close', (code) => {
+        clearTimeout(timer)
+        if (timedOut) {
+          reject(new Error(`claude timed out after ${CLAUDE_TIMEOUT_MS / 1000}s`))
+          return
+        }
         if (code !== 0) {
           reject(new Error(`claude exited ${code}: ${stderr.slice(0, 500)}`))
           return
@@ -158,6 +180,11 @@ async function analyzeWithClaude(
         }
 
         resolve(text)
+      })
+
+      proc.on('error', (err) => {
+        clearTimeout(timer)
+        reject(err)
       })
     })
   } finally {
@@ -296,11 +323,18 @@ function parseBool(v: unknown, fallback: boolean): boolean {
 }
 
 app.post('/api/analyze', upload.array('photo', MAX_PHOTOS), async (req, res) => {
+  // Per-request log id so concurrent requests are easy to disambiguate when
+  // multiple users hit the tunnel at once.
+  const reqId = Math.random().toString(36).slice(2, 8)
+  const reqStart = Date.now()
+  const logTag = (event: string) => `[${new Date().toISOString()}] [analyze ${reqId}] ${event}`
+
   // multer.array() puts files on req.files. The single-file legacy field name
   // is kept ('photo') so old clients that send one file still work — multer
   // just returns a 1-element array for them.
   const files = (req.files as Express.Multer.File[] | undefined) ?? []
   if (files.length === 0) {
+    console.warn(logTag('rejected: no photo uploaded'))
     res.status(400).json({ error: 'No photo uploaded' })
     return
   }
@@ -308,6 +342,7 @@ app.post('/api/analyze', upload.array('photo', MAX_PHOTOS), async (req, res) => 
   const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
   for (const f of files) {
     if (!allowed.includes(f.mimetype)) {
+      console.warn(logTag(`rejected: unsupported mime ${f.mimetype}`))
       res.status(400).json({ error: 'Unsupported file type. Use JPG, PNG, or WebP.' })
       return
     }
@@ -319,14 +354,25 @@ app.post('/api/analyze', upload.array('photo', MAX_PHOTOS), async (req, res) => 
   const includeMakeup = parseBool(req.body?.includeMakeup, true)
   const rawName = typeof req.body?.name === 'string' ? req.body.name.trim().slice(0, 60) : ''
 
+  console.log(
+    logTag(
+      `start photos=${files.length} bytes=${files.reduce((s, f) => s + f.size, 0)} ` +
+      `name="${rawName || '<unset>'}" makeup=${includeMakeup} ua="${(req.headers['user-agent'] || '').slice(0, 60)}"`,
+    ),
+  )
+
   const photos: PhotoInput[] = files.map(f => ({ buffer: f.buffer, mimeType: f.mimetype }))
 
   let raw: string
   try {
     raw = await analyzeWithClaude(photos, { includeMakeup })
   } catch (err) {
-    console.error('Claude CLI error:', err)
-    res.status(500).json({ error: 'Analysis failed. Please try again.' })
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error(logTag(`claude failed in ${Date.now() - reqStart}ms: ${msg}`))
+    const friendly = msg.includes('timed out')
+      ? 'Analysis timed out. Try again with a single photo or a faster connection.'
+      : 'Analysis failed. Please try again.'
+    res.status(500).json({ error: friendly })
     return
   }
 
@@ -334,12 +380,13 @@ app.post('/api/analyze', upload.array('photo', MAX_PHOTOS), async (req, res) => 
   try {
     profile = parseProfile(raw)
   } catch {
+    console.warn(logTag('first parse failed, retrying once'))
     // Retry once
     try {
       raw = await analyzeWithClaude(photos, { includeMakeup })
       profile = parseProfile(raw)
     } catch {
-      console.error('Parse failed after retry. Raw:', raw?.slice(0, 300))
+      console.error(logTag(`parse failed after retry. raw head=${(raw || '').slice(0, 200)}`))
       res.status(500).json({ error: 'Failed to parse analysis. Please try again.' })
       return
     }
@@ -360,8 +407,12 @@ app.post('/api/analyze', upload.array('photo', MAX_PHOTOS), async (req, res) => 
   try {
     await enrichHairstylesWithImages(p)
   } catch (err) {
-    console.warn('Hair image enrichment failed:', err)
+    console.warn(logTag(`hair enrichment failed: ${err instanceof Error ? err.message : err}`))
   }
+
+  const elapsed = Date.now() - reqStart
+  const errField = typeof p.error === 'string' && p.error ? `error="${p.error.slice(0, 80)}"` : 'ok'
+  console.log(logTag(`done in ${elapsed}ms ${errField}`))
 
   res.json(profile)
 })

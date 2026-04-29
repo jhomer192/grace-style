@@ -115,8 +115,19 @@ export default function App() {
     form.append('name', name.trim())
     form.append('includeMakeup', includeMakeup ? 'true' : 'false')
 
+    // Hard client-side timeout. The server caps Claude at 90s and Cloudflare
+    // quick tunnels disconnect at 100s, so 110s here is past both — at that
+    // point something genuinely went wrong and the user deserves a clear
+    // message rather than a spinner that spins forever.
+    const controller = new AbortController()
+    const abortTimer = setTimeout(() => controller.abort(), 110_000)
+
     try {
-      const res = await fetch('/api/analyze', { method: 'POST', body: form })
+      const res = await fetch('/api/analyze', {
+        method: 'POST',
+        body: form,
+        signal: controller.signal,
+      })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Analysis failed')
       if (data.error) {
@@ -134,8 +145,17 @@ export default function App() {
         setAnalyses(prev => [saved, ...prev.filter(a => a.id !== saved.id)])
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Something went wrong')
+      // Translate raw fetch failures into something a non-engineer can act on.
+      if (e instanceof DOMException && e.name === 'AbortError') {
+        setError("Analysis took too long. Try again with one clear photo, or refresh and retry.")
+      } else if (e instanceof TypeError) {
+        // Common case: connection dropped (tunnel killed it, wifi flicker).
+        setError("Couldn't reach the server. Check your connection and try again.")
+      } else {
+        setError(e instanceof Error ? e.message : 'Something went wrong')
+      }
     } finally {
+      clearTimeout(abortTimer)
       setLoading(false)
     }
   }
