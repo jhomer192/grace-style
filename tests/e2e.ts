@@ -40,6 +40,7 @@ function validateSwatch(s: unknown, p: string, fails: Fail[], requireWhy = false
 interface ValidateOpts {
   expectMakeup: boolean
   expectName?: string
+  expectPhotoCount?: number
 }
 
 function validateProfile(data: unknown, opts: ValidateOpts): Fail[] {
@@ -63,6 +64,12 @@ function validateProfile(data: unknown, opts: ValidateOpts): Fail[] {
   // Optional name — must round-trip when supplied by the client (always)
   if (opts.expectName !== undefined) {
     check(fails, p.name === opts.expectName, 'name', `expected ${JSON.stringify(opts.expectName)}, got ${JSON.stringify(p.name)}`)
+  }
+
+  // photoCount — server-echoed structural invariant, holds even on error path
+  if (opts.expectPhotoCount !== undefined) {
+    check(fails, p.photoCount === opts.expectPhotoCount,
+          'photoCount', `expected ${opts.expectPhotoCount}, got ${JSON.stringify(p.photoCount)}`)
   }
 
   // makeup presence — invariant on the includeMakeup flag (always)
@@ -182,13 +189,24 @@ interface RunCase {
   label: string
   name: string
   includeMakeup: boolean
+  /** How many copies of the image to upload — exercises the multi-photo
+   *  path. The same file is uploaded N times since the test runner only
+   *  takes one image as input; that's fine — multer/Express don't care
+   *  whether the bytes are identical, and the structural invariant we want
+   *  to verify is that the server accepts N files and echoes photoCount=N. */
+  photoCount: number
 }
 
 async function runCase(base: string, imagePath: string, mime: string, c: RunCase): Promise<boolean> {
-  console.log(`▶ ${c.label}  (name=${JSON.stringify(c.name)}, includeMakeup=${c.includeMakeup})`)
+  console.log(`▶ ${c.label}  (name=${JSON.stringify(c.name)}, includeMakeup=${c.includeMakeup}, photos=${c.photoCount})`)
 
   const form = new FormData()
-  form.append('photo', fs.createReadStream(imagePath), { contentType: mime, filename: path.basename(imagePath) })
+  for (let i = 0; i < c.photoCount; i++) {
+    form.append('photo', fs.createReadStream(imagePath), {
+      contentType: mime,
+      filename: `${path.basename(imagePath, path.extname(imagePath))}-${i + 1}${path.extname(imagePath)}`,
+    })
+  }
   form.append('name', c.name)
   form.append('includeMakeup', c.includeMakeup ? 'true' : 'false')
 
@@ -198,7 +216,11 @@ async function runCase(base: string, imagePath: string, mime: string, c: RunCase
     return false
   }
 
-  const fails = validateProfile(result.body, { expectMakeup: c.includeMakeup, expectName: c.name })
+  const fails = validateProfile(result.body, {
+    expectMakeup: c.includeMakeup,
+    expectName: c.name,
+    expectPhotoCount: c.photoCount,
+  })
   if (fails.length > 0) {
     console.error(`  ✗ ${fails.length} schema issue(s):`)
     fails.forEach(f => console.error(`     [${f.field}] ${f.issue}`))
@@ -209,7 +231,7 @@ async function runCase(base: string, imagePath: string, mime: string, c: RunCase
   if (typeof p.error === 'string' && p.error.length > 0) {
     console.log(`  ✓ structural invariants held (error path): ${p.error}\n`)
   } else {
-    console.log(`  ✓ ${p.season} / ${p.undertone} undertone${c.includeMakeup ? ' / +makeup' : ' / no makeup'}\n`)
+    console.log(`  ✓ ${p.season} / ${p.undertone} undertone${c.includeMakeup ? ' / +makeup' : ' / no makeup'} / ${c.photoCount} photo${c.photoCount > 1 ? 's' : ''}\n`)
   }
   return true
 }
@@ -254,8 +276,9 @@ async function main() {
   const mime = mimeMap[ext] ?? 'image/jpeg'
 
   const cases: RunCase[] = [
-    { label: 'Case 1 — full analysis with makeup',  name: 'Test User',  includeMakeup: true  },
-    { label: 'Case 2 — analysis without makeup',    name: 'Jack',        includeMakeup: false },
+    { label: 'Case 1 — single-photo full analysis', name: 'Test User', includeMakeup: true,  photoCount: 1 },
+    { label: 'Case 2 — single-photo, no makeup',    name: 'Jack',      includeMakeup: false, photoCount: 1 },
+    { label: 'Case 3 — multi-photo (3 photos)',     name: 'Gary',      includeMakeup: true,  photoCount: 3 },
   ]
 
   let allOk = true

@@ -20,6 +20,9 @@ export interface MakeupProfile {
 export interface StyleProfile {
   /** Display name supplied by the user on upload (e.g. "Jack"). */
   name?: string
+  /** How many photos the analysis was synthesized from (1–5). Echoed by the
+   *  server so the rendered card can show "Analyzed from N photos". */
+  photoCount?: number
   analyzedAt: string
   season: string
   undertone: 'warm' | 'cool' | 'neutral'

@@ -1,5 +1,6 @@
 import { useRef } from 'react'
 import type { StyleProfile } from '../types'
+import { MakeupMockup } from './MakeupMockup'
 
 interface Props {
   profile: StyleProfile
@@ -294,41 +295,56 @@ export function ColorCard({ profile, photo }: Props) {
                 {profile.makeup.foundationUndertone}
               </p>
 
-              <div className="grid grid-cols-3 gap-3">
-                <div className="text-center space-y-2">
-                  <p className="text-stone-400 text-[9px] label-caps">Eyes</p>
-                  <div className="flex justify-center gap-1">
-                    {profile.makeup.eyeshadow.map(c => (
-                      <div
-                        key={c.hex + c.name}
-                        className="w-6 h-6 rounded-full border-2 border-white shadow-sm"
-                        style={{ backgroundColor: c.hex }}
-                        title={c.name}
-                      />
-                    ))}
-                  </div>
+              {/* Stylized face mockup with the recommended palette painted on,
+                  paired with a legend so each color block is identified by name. */}
+              <div className="grid grid-cols-[140px_1fr] gap-3 items-center">
+                <div
+                  className="rounded-xl overflow-hidden p-1"
+                  style={{ backgroundColor: `${accent}10` }}
+                >
+                  <MakeupMockup makeup={profile.makeup} />
                 </div>
-                <div className="text-center space-y-2">
-                  <p className="text-stone-400 text-[9px] label-caps">Lips</p>
-                  <div className="flex justify-center gap-1">
-                    {profile.makeup.lipColors.map(c => (
-                      <div
-                        key={c.hex + c.name}
-                        className="w-6 h-6 rounded-full border-2 border-white shadow-sm"
-                        style={{ backgroundColor: c.hex }}
-                        title={c.name}
-                      />
-                    ))}
+
+                <div className="space-y-2 text-[10px]">
+                  <div>
+                    <p className="text-stone-400 label-caps mb-1 text-[9px]">Eyes</p>
+                    <div className="flex flex-col gap-0.5">
+                      {profile.makeup.eyeshadow.map(c => (
+                        <div key={c.hex + c.name} className="flex items-center gap-1.5">
+                          <span
+                            className="w-3 h-3 rounded-sm border border-white shadow-sm flex-shrink-0"
+                            style={{ backgroundColor: c.hex }}
+                          />
+                          <span className="text-stone-700 truncate">{c.name}</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                </div>
-                <div className="text-center space-y-2">
-                  <p className="text-stone-400 text-[9px] label-caps">Blush</p>
-                  <div className="flex justify-center">
-                    <div
-                      className="w-6 h-6 rounded-full border-2 border-white shadow-sm"
-                      style={{ backgroundColor: profile.makeup.blush.hex }}
-                      title={profile.makeup.blush.name}
-                    />
+
+                  <div>
+                    <p className="text-stone-400 label-caps mb-1 text-[9px]">Lips</p>
+                    <div className="flex flex-col gap-0.5">
+                      {profile.makeup.lipColors.map(c => (
+                        <div key={c.hex + c.name} className="flex items-center gap-1.5">
+                          <span
+                            className="w-3 h-3 rounded-sm border border-white shadow-sm flex-shrink-0"
+                            style={{ backgroundColor: c.hex }}
+                          />
+                          <span className="text-stone-700 truncate">{c.name}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className="text-stone-400 label-caps mb-1 text-[9px]">Blush</p>
+                    <div className="flex items-center gap-1.5">
+                      <span
+                        className="w-3 h-3 rounded-sm border border-white shadow-sm flex-shrink-0"
+                        style={{ backgroundColor: profile.makeup.blush.hex }}
+                      />
+                      <span className="text-stone-700 truncate">{profile.makeup.blush.name}</span>
+                    </div>
                   </div>
                 </div>
               </div>

@@ -9,11 +9,35 @@ import { deleteAnalysis, loadAnalyses, saveAnalysis } from './utils/storage'
 
 type Tab = 'color' | 'hair'
 
+/** Server-side limit (see server.ts MAX_PHOTOS). Mirrored here so the UI
+ *  blocks over-selection client-side and we never bother the server. */
+const MAX_PHOTOS = 5
+const MAX_FILE_SIZE = 10 * 1024 * 1024
+
+interface PendingPhoto {
+  file: File
+  preview: string
+}
+
+/** Read a File as a data URL — used for previewing and for persisting the
+ *  hero image into localStorage. */
+function readDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader()
+    r.onload = () => resolve(r.result as string)
+    r.onerror = () => reject(r.error ?? new Error('FileReader failed'))
+    r.readAsDataURL(file)
+  })
+}
+
 export default function App() {
-  const [file, setFile] = useState<File | null>(null)
-  const [preview, setPreview] = useState<string | null>(null)
+  const [photos, setPhotos] = useState<PendingPhoto[]>([])
   const [loading, setLoading] = useState(false)
   const [profile, setProfile] = useState<StyleProfile | null>(null)
+  // The hero photo to render on the result card. When opening a saved
+  // analysis we don't have the original Files, only the persisted data URL,
+  // so we keep this independent of `photos`.
+  const [resultPhoto, setResultPhoto] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [tab, setTab] = useState<Tab>('color')
   const [name, setName] = useState('')
@@ -26,21 +50,56 @@ export default function App() {
     setAnalyses(loadAnalyses())
   }, [])
 
-  const handleFile = (f: File) => {
-    if (f.size > 10 * 1024 * 1024) {
-      setError('Photo must be under 10MB')
+  /**
+   * Append newly-picked files to the pending photo set, up to the cap. Each
+   * file is validated for size and type; bad files are surfaced as a single
+   * error rather than silently dropped, otherwise users can't tell why their
+   * photo didn't appear.
+   */
+  const addFiles = async (incoming: File[]) => {
+    setError(null)
+    const slots = MAX_PHOTOS - photos.length
+    if (slots <= 0) {
+      setError(`Already at the ${MAX_PHOTOS}-photo limit`)
       return
     }
-    setFile(f)
-    setError(null)
-    setProfile(null)
-    const reader = new FileReader()
-    reader.onload = e => setPreview(e.target?.result as string)
-    reader.readAsDataURL(f)
+    const accepted: PendingPhoto[] = []
+    const rejections: string[] = []
+
+    for (const f of incoming.slice(0, slots)) {
+      if (!/^image\/(jpeg|png|webp)$/.test(f.type)) {
+        rejections.push(`${f.name}: must be JPG, PNG, or WebP`)
+        continue
+      }
+      if (f.size > MAX_FILE_SIZE) {
+        rejections.push(`${f.name}: must be under 10MB`)
+        continue
+      }
+      try {
+        const preview = await readDataUrl(f)
+        accepted.push({ file: f, preview })
+      } catch {
+        rejections.push(`${f.name}: could not be read`)
+      }
+    }
+
+    if (accepted.length > 0) {
+      setPhotos(prev => [...prev, ...accepted])
+      setProfile(null)
+    }
+    if (rejections.length > 0) {
+      setError(rejections.join('  ·  '))
+    } else if (incoming.length > slots) {
+      setError(`Only the first ${slots} photo${slots === 1 ? '' : 's'} were added — limit is ${MAX_PHOTOS}`)
+    }
+  }
+
+  const removePhoto = (idx: number) => {
+    setPhotos(prev => prev.filter((_, i) => i !== idx))
   }
 
   const analyze = async () => {
-    if (!file) return
+    if (photos.length === 0) return
     if (!name.trim()) {
       setError('Please enter a name so we can label your saved card')
       return
@@ -50,7 +109,9 @@ export default function App() {
     setProfile(null)
 
     const form = new FormData()
-    form.append('photo', file)
+    // multer.array('photo', ...) accepts the same field name repeated. Each
+    // photo is appended as a separate `photo` part.
+    for (const p of photos) form.append('photo', p.file)
     form.append('name', name.trim())
     form.append('includeMakeup', includeMakeup ? 'true' : 'false')
 
@@ -64,13 +125,13 @@ export default function App() {
         const result = data as StyleProfile
         setProfile(result)
         setTab('color')
-        // Persist so the drawer immediately reflects the new entry. We use
-        // the data: URL that's already in `preview` rather than re-reading
-        // the file, since FileReader is async.
-        if (preview) {
-          const saved = saveAnalysis(name.trim(), result, preview)
-          setAnalyses(prev => [saved, ...prev.filter(a => a.id !== saved.id)])
-        }
+        // The first uploaded photo becomes the hero/saved image. The other
+        // photos informed the analysis but are discarded post-analyze to
+        // keep localStorage under quota for households running 30 saves.
+        const hero = photos[0].preview
+        setResultPhoto(hero)
+        const saved = saveAnalysis(name.trim(), result, hero)
+        setAnalyses(prev => [saved, ...prev.filter(a => a.id !== saved.id)])
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Something went wrong')
@@ -80,9 +141,9 @@ export default function App() {
   }
 
   const reset = () => {
-    setFile(null)
-    setPreview(null)
+    setPhotos([])
     setProfile(null)
+    setResultPhoto(null)
     setError(null)
     setLoading(false)
     if (fileInputRef.current) fileInputRef.current.value = ''
@@ -90,8 +151,8 @@ export default function App() {
 
   /** Re-open a previously saved analysis without re-running the API. */
   const openSaved = (a: SavedAnalysis) => {
-    setFile(null)
-    setPreview(a.photoDataUrl)
+    setPhotos([])
+    setResultPhoto(a.photoDataUrl)
     setProfile(a.profile)
     setName(a.name)
     setIncludeMakeup(Boolean(a.profile.makeup))
@@ -133,9 +194,11 @@ export default function App() {
         {!profile && !loading && (
           <div className="space-y-4">
             <UploadZone
-              preview={preview}
+              previews={photos.map(p => p.preview)}
+              maxPhotos={MAX_PHOTOS}
               fileInputRef={fileInputRef}
-              onFile={handleFile}
+              onAddFiles={addFiles}
+              onRemove={removePhoto}
             />
 
             {/* Name field — required so the saved card is labelled */}
@@ -155,7 +218,7 @@ export default function App() {
             <label className="flex items-center justify-between gap-3 bg-white border border-stone-200 rounded-2xl px-4 py-3 cursor-pointer">
               <span className="flex flex-col">
                 <span className="text-stone-700 text-sm font-medium">Include makeup palette</span>
-                <span className="text-stone-400 text-xs">Foundation undertone, eyeshadow, lips, blush</span>
+                <span className="text-stone-400 text-xs">Foundation undertone, eyeshadow, lips, blush + face mockup</span>
               </span>
               <input
                 type="checkbox"
@@ -169,7 +232,7 @@ export default function App() {
               <p className="text-red-500 text-sm text-center bg-red-50 rounded-xl py-3 px-4">{error}</p>
             )}
 
-            {file && (
+            {photos.length > 0 && (
               <button
                 onClick={analyze}
                 className="w-full bg-stone-800 text-white py-4 rounded-2xl text-base font-medium tracking-wide hover:bg-stone-700 active:scale-[0.98] transition-all"
@@ -179,7 +242,7 @@ export default function App() {
             )}
 
             <p className="text-center text-xs text-stone-400">
-              Your photo is sent to Anthropic for analysis only and is not stored on our servers.
+              Your photos are sent to Anthropic for analysis only and are not stored on our servers.
             </p>
           </div>
         )}
@@ -188,7 +251,7 @@ export default function App() {
         {loading && <LoadingState />}
 
         {/* Results */}
-        {profile && !loading && (
+        {profile && !loading && resultPhoto && (
           <div className="space-y-4">
             {/* Editorial header — minimal here since the heavy treatment lives on the cards themselves */}
             <div className="text-center space-y-1 py-2">
@@ -202,6 +265,7 @@ export default function App() {
               </h2>
               <p className="text-stone-500 text-[10px] uppercase tracking-[0.25em]">
                 {profile.undertone} undertone
+                {profile.photoCount && profile.photoCount > 1 ? ` · ${profile.photoCount} photos` : ''}
               </p>
             </div>
 
@@ -223,7 +287,7 @@ export default function App() {
             </div>
 
             {/* Tab content */}
-            {tab === 'color' && <ColorCard profile={profile} photo={preview!} />}
+            {tab === 'color' && <ColorCard profile={profile} photo={resultPhoto} />}
             {tab === 'hair' && <HairCard profile={profile} />}
 
             {/* Try another */}

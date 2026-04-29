@@ -10,7 +10,14 @@ const app = express()
 app.use(cors())
 app.use(express.json())
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } })
+/** Cap per request. Anything beyond 5 photos hits diminishing returns and
+ *  inflates Claude latency / token cost without sharpening the analysis. */
+const MAX_PHOTOS = 5
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024, files: MAX_PHOTOS },
+})
 
 /**
  * Build the system prompt. Sections of the schema can be toggled off so a user
@@ -80,18 +87,43 @@ ${makeupRequirements}- hair.hairstyles: exactly 3 entries
 - If you cannot clearly see the person's face, set error to a brief explanation and fill other fields with empty/default values`
 }
 
+interface PhotoInput {
+  buffer: Buffer
+  mimeType: string
+}
+
+function extFor(mime: string): string {
+  return mime === 'image/png' ? '.png' : mime === 'image/webp' ? '.webp' : '.jpg'
+}
+
 async function analyzeWithClaude(
-  imageBuffer: Buffer,
-  mimeType: string,
+  photos: PhotoInput[],
   opts: { includeMakeup: boolean },
 ): Promise<string> {
-  const ext = mimeType === 'image/png' ? '.png' : mimeType === 'image/webp' ? '.webp' : '.jpg'
-  const tmpPath = path.join(os.tmpdir(), `grace-style-${Date.now()}${ext}`)
-  fs.writeFileSync(tmpPath, imageBuffer)
+  if (photos.length === 0) throw new Error('analyzeWithClaude called with no photos')
+
+  // Write each photo to its own tmp file. Including a per-photo index in the
+  // path makes the prompt easier for Claude to parse — `photo-1`, `photo-2`,
+  // etc. — while keeping the overall request a single batched analysis.
+  const ts = Date.now()
+  const tmpPaths = photos.map((p, i) =>
+    path.join(os.tmpdir(), `grace-style-${ts}-${i + 1}${extFor(p.mimeType)}`),
+  )
+  photos.forEach((p, i) => fs.writeFileSync(tmpPaths[i], p.buffer))
 
   try {
     return await new Promise<string>((resolve, reject) => {
-      const prompt = `Read the portrait image at this exact path: ${tmpPath}\n\nThen analyze the person's color season and return the JSON profile as specified in your instructions. Return ONLY raw JSON.`
+      // The prompt explicitly tells Claude how to combine multiple photos:
+      // synthesize one analysis using the variety of lighting/outfits to
+      // refine the read, rather than analysing each photo separately.
+      const photoBlock =
+        photos.length === 1
+          ? `Read the portrait image at this exact path: ${tmpPaths[0]}`
+          : `Read all of these portrait images of the same person, taken in different outfits or lighting:\n${tmpPaths
+              .map((p, i) => `  Photo ${i + 1}: ${p}`)
+              .join('\n')}\n\nUse the full set to refine your read of skin undertone, hair color, contrast level, and which palette truly flatters them — rather than relying on any one photo's lighting.`
+
+      const prompt = `${photoBlock}\n\nThen analyze the person's color season and return the JSON profile as specified in your instructions. Return ONLY raw JSON.`
 
       const proc = spawn('claude', [
         '--print',
@@ -127,7 +159,9 @@ async function analyzeWithClaude(
       })
     })
   } finally {
-    try { fs.unlinkSync(tmpPath) } catch { /* ignore */ }
+    for (const p of tmpPaths) {
+      try { fs.unlinkSync(p) } catch { /* ignore */ }
+    }
   }
 }
 
@@ -151,16 +185,22 @@ function parseBool(v: unknown, fallback: boolean): boolean {
   return fallback
 }
 
-app.post('/api/analyze', upload.single('photo'), async (req, res) => {
-  if (!req.file) {
+app.post('/api/analyze', upload.array('photo', MAX_PHOTOS), async (req, res) => {
+  // multer.array() puts files on req.files. The single-file legacy field name
+  // is kept ('photo') so old clients that send one file still work — multer
+  // just returns a 1-element array for them.
+  const files = (req.files as Express.Multer.File[] | undefined) ?? []
+  if (files.length === 0) {
     res.status(400).json({ error: 'No photo uploaded' })
     return
   }
 
   const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
-  if (!allowed.includes(req.file.mimetype)) {
-    res.status(400).json({ error: 'Unsupported file type. Use JPG, PNG, or WebP.' })
-    return
+  for (const f of files) {
+    if (!allowed.includes(f.mimetype)) {
+      res.status(400).json({ error: 'Unsupported file type. Use JPG, PNG, or WebP.' })
+      return
+    }
   }
 
   // Optional client-supplied fields. The server doesn't trust or persist
@@ -169,9 +209,11 @@ app.post('/api/analyze', upload.single('photo'), async (req, res) => {
   const includeMakeup = parseBool(req.body?.includeMakeup, true)
   const rawName = typeof req.body?.name === 'string' ? req.body.name.trim().slice(0, 60) : ''
 
+  const photos: PhotoInput[] = files.map(f => ({ buffer: f.buffer, mimeType: f.mimetype }))
+
   let raw: string
   try {
-    raw = await analyzeWithClaude(req.file.buffer, req.file.mimetype, { includeMakeup })
+    raw = await analyzeWithClaude(photos, { includeMakeup })
   } catch (err) {
     console.error('Claude CLI error:', err)
     res.status(500).json({ error: 'Analysis failed. Please try again.' })
@@ -184,7 +226,7 @@ app.post('/api/analyze', upload.single('photo'), async (req, res) => {
   } catch {
     // Retry once
     try {
-      raw = await analyzeWithClaude(req.file.buffer, req.file.mimetype, { includeMakeup })
+      raw = await analyzeWithClaude(photos, { includeMakeup })
       profile = parseProfile(raw)
     } catch {
       console.error('Parse failed after retry. Raw:', raw?.slice(0, 300))
@@ -196,6 +238,9 @@ app.post('/api/analyze', upload.single('photo'), async (req, res) => {
   const p = profile as Record<string, unknown>
   if (!p.analyzedAt) p.analyzedAt = new Date().toISOString().split('T')[0]
   if (rawName) p.name = rawName
+  // Echo the photo count so the card can show "Analyzed from N photos" —
+  // the client doesn't trust this for any logic, just renders the badge.
+  p.photoCount = files.length
   // Defensive: if Claude included makeup despite the opt-out, drop it so the
   // client doesn't render a section the user explicitly hid.
   if (!includeMakeup && 'makeup' in p) delete p.makeup
