@@ -19,7 +19,8 @@ export function ColorCard({ profile, photo }: Props) {
       backgroundColor: '#faf8f5',
     })
     const link = document.createElement('a')
-    link.download = 'color-analysis.png'
+    const slug = (profile.name || 'color').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'color'
+    link.download = `${slug}-color-analysis.png`
     link.href = canvas.toDataURL('image/png')
     link.click()
   }
@@ -33,10 +34,13 @@ export function ColorCard({ profile, photo }: Props) {
         <div className="flex items-center gap-4">
           <img
             src={photo}
-            alt="You"
+            alt={profile.name ? `${profile.name}'s portrait` : 'Your portrait'}
             className="w-16 h-16 rounded-2xl object-cover border-2 border-white shadow-md flex-shrink-0"
           />
           <div>
+            {profile.name && (
+              <p className="text-stone-800 font-serif text-lg leading-tight mb-0.5">{profile.name}</p>
+            )}
             <div className="inline-block bg-amber-100 text-amber-800 px-3 py-0.5 rounded-full text-xs font-semibold tracking-widest uppercase mb-1">
               {profile.season}
             </div>
@@ -80,29 +84,31 @@ export function ColorCard({ profile, photo }: Props) {
           </div>
         </div>
 
-        {/* Makeup */}
-        <div>
-          <h3 className="text-stone-700 font-semibold text-xs uppercase tracking-wider mb-3">Makeup</h3>
-          <p className="text-stone-500 text-xs mb-3">{profile.makeup.foundationUndertone}</p>
-          <div className="grid grid-cols-3 gap-3">
-            <div>
-              <p className="text-stone-400 text-[10px] uppercase tracking-wide mb-2">Eyes</p>
-              <div className="flex gap-1.5 flex-wrap">
-                {profile.makeup.eyeshadow.map(c => <SwatchChip key={c.hex} swatch={c} size="sm" />)}
+        {/* Makeup — only when the user opted in on upload */}
+        {profile.makeup && (
+          <div>
+            <h3 className="text-stone-700 font-semibold text-xs uppercase tracking-wider mb-3">Makeup</h3>
+            <p className="text-stone-500 text-xs mb-3">{profile.makeup.foundationUndertone}</p>
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <p className="text-stone-400 text-[10px] uppercase tracking-wide mb-2">Eyes</p>
+                <div className="flex gap-1.5 flex-wrap">
+                  {profile.makeup.eyeshadow.map(c => <SwatchChip key={c.hex} swatch={c} size="sm" />)}
+                </div>
               </div>
-            </div>
-            <div>
-              <p className="text-stone-400 text-[10px] uppercase tracking-wide mb-2">Lips</p>
-              <div className="flex gap-1.5 flex-wrap">
-                {profile.makeup.lipColors.map(c => <SwatchChip key={c.hex} swatch={c} size="sm" />)}
+              <div>
+                <p className="text-stone-400 text-[10px] uppercase tracking-wide mb-2">Lips</p>
+                <div className="flex gap-1.5 flex-wrap">
+                  {profile.makeup.lipColors.map(c => <SwatchChip key={c.hex} swatch={c} size="sm" />)}
+                </div>
               </div>
-            </div>
-            <div>
-              <p className="text-stone-400 text-[10px] uppercase tracking-wide mb-2">Blush</p>
-              <SwatchChip swatch={profile.makeup.blush} size="sm" />
+              <div>
+                <p className="text-stone-400 text-[10px] uppercase tracking-wide mb-2">Blush</p>
+                <SwatchChip swatch={profile.makeup.blush} size="sm" />
+              </div>
             </div>
           </div>
-        </div>
+        )}
 
         {/* Accessories */}
         <div>

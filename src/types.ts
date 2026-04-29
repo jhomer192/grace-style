@@ -10,7 +10,16 @@ export interface Hairstyle {
   why: string
 }
 
+export interface MakeupProfile {
+  foundationUndertone: string
+  eyeshadow: ColorSwatch[]
+  lipColors: ColorSwatch[]
+  blush: ColorSwatch
+}
+
 export interface StyleProfile {
+  /** Display name supplied by the user on upload (e.g. "Jack"). */
+  name?: string
   analyzedAt: string
   season: string
   undertone: 'warm' | 'cool' | 'neutral'
@@ -18,12 +27,8 @@ export interface StyleProfile {
   bestColors: ColorSwatch[]
   avoidColors: ColorSwatch[]
   colorWhyOverall: string
-  makeup: {
-    foundationUndertone: string
-    eyeshadow: ColorSwatch[]
-    lipColors: ColorSwatch[]
-    blush: ColorSwatch
-  }
+  /** Omitted when the user opts out of makeup recommendations on upload. */
+  makeup?: MakeupProfile
   hair: {
     faceShape: string
     hairstyles: Hairstyle[]
@@ -35,4 +40,16 @@ export interface StyleProfile {
     jewelryStyle: string[]
   }
   error: string | null
+}
+
+/** A persisted analysis, stored in localStorage so users can revisit past results. */
+export interface SavedAnalysis {
+  /** Stable id: `${nameSlug}-${createdAt}`. */
+  id: string
+  name: string
+  /** ISO timestamp when the analysis was created on the client. */
+  createdAt: string
+  /** data: URL of the uploaded photo so cards remain renderable offline. */
+  photoDataUrl: string
+  profile: StyleProfile
 }

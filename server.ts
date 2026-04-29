@@ -12,7 +12,30 @@ app.use(express.json())
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } })
 
-const SYSTEM_PROMPT = `You are an expert personal stylist and color analyst specializing in the 12-season color analysis system.
+/**
+ * Build the system prompt. Sections of the schema can be toggled off so a user
+ * who doesn't want makeup recommendations doesn't get a half-empty card or
+ * irrelevant advice. Hair, color, and accessories always render.
+ */
+function buildSystemPrompt(opts: { includeMakeup: boolean }): string {
+  const makeupBlock = opts.includeMakeup
+    ? `
+  "makeup": {
+    "foundationUndertone": "<description>",
+    "eyeshadow": [{ "name": "<name>", "hex": "<hex>", "whyWorks": "<why>" }],
+    "lipColors": [{ "name": "<name>", "hex": "<hex>", "whyWorks": "<why>" }],
+    "blush": { "name": "<name>", "hex": "<hex>", "whyWorks": "<why>" }
+  },`
+    : ''
+
+  const makeupRequirements = opts.includeMakeup
+    ? `- makeup.eyeshadow: exactly 3 entries
+- makeup.lipColors: exactly 2 entries
+`
+    : `- DO NOT include a "makeup" key in the output. The user has opted out of makeup recommendations.
+`
+
+  return `You are an expert personal stylist and color analyst specializing in the 12-season color analysis system.
 Read the portrait image file and return ONLY a valid JSON object. No markdown, no code fences, no explanation — raw JSON only.
 
 Return this exact schema:
@@ -27,13 +50,7 @@ Return this exact schema:
   ],
   "avoidColors": [
     { "name": "<color name>", "hex": "<#xxxxxx>", "whyWorks": "<1 sentence — why this clashes or washes them out>" }
-  ],
-  "makeup": {
-    "foundationUndertone": "<description>",
-    "eyeshadow": [{ "name": "<name>", "hex": "<hex>", "whyWorks": "<why>" }],
-    "lipColors": [{ "name": "<name>", "hex": "<hex>", "whyWorks": "<why>" }],
-    "blush": { "name": "<name>", "hex": "<hex>", "whyWorks": "<why>" }
-  },
+  ],${makeupBlock}
   "hair": {
     "faceShape": "<oval | round | square | heart | oblong | diamond>",
     "hairstyles": [
@@ -54,16 +71,20 @@ Return this exact schema:
 Requirements:
 - bestColors: exactly 8 entries, each with whyWorks
 - avoidColors: exactly 4 entries, each with whyWorks
-- makeup.eyeshadow: exactly 3 entries
-- makeup.lipColors: exactly 2 entries
-- hair.hairstyles: exactly 3 entries
+${makeupRequirements}- hair.hairstyles: exactly 3 entries
 - hair.colorOptions: exactly 3 entries
 - hair.styleNotes: exactly 3 entries
 - accessories.jewelryStyle: exactly 3 entries
 - All hex codes must be valid 6-digit hex strings starting with #
+- Tailor recommendations to the apparent person in the photo without assuming gender from any single feature — base advice on their actual coloring, face shape, and existing styling.
 - If you cannot clearly see the person's face, set error to a brief explanation and fill other fields with empty/default values`
+}
 
-async function analyzeWithClaude(imageBuffer: Buffer, mimeType: string): Promise<string> {
+async function analyzeWithClaude(
+  imageBuffer: Buffer,
+  mimeType: string,
+  opts: { includeMakeup: boolean },
+): Promise<string> {
   const ext = mimeType === 'image/png' ? '.png' : mimeType === 'image/webp' ? '.webp' : '.jpg'
   const tmpPath = path.join(os.tmpdir(), `grace-style-${Date.now()}${ext}`)
   fs.writeFileSync(tmpPath, imageBuffer)
@@ -75,7 +96,7 @@ async function analyzeWithClaude(imageBuffer: Buffer, mimeType: string): Promise
       const proc = spawn('claude', [
         '--print',
         prompt,
-        '--system-prompt', SYSTEM_PROMPT,
+        '--system-prompt', buildSystemPrompt(opts),
         '--allowedTools', 'Read',
         '--output-format', 'json',
         '--no-session-persistence',
@@ -118,6 +139,18 @@ function parseProfile(raw: string): unknown {
   return JSON.parse(cleaned)
 }
 
+/**
+ * Coerce a multipart text field to a boolean. Accepts "true"/"false",
+ * "1"/"0", "on"/"off". Defaults to fallback for missing or unrecognised input.
+ */
+function parseBool(v: unknown, fallback: boolean): boolean {
+  if (typeof v !== 'string') return fallback
+  const s = v.trim().toLowerCase()
+  if (s === 'true' || s === '1' || s === 'on' || s === 'yes') return true
+  if (s === 'false' || s === '0' || s === 'off' || s === 'no') return false
+  return fallback
+}
+
 app.post('/api/analyze', upload.single('photo'), async (req, res) => {
   if (!req.file) {
     res.status(400).json({ error: 'No photo uploaded' })
@@ -130,9 +163,15 @@ app.post('/api/analyze', upload.single('photo'), async (req, res) => {
     return
   }
 
+  // Optional client-supplied fields. The server doesn't trust or persist
+  // these — they're just used to shape the prompt and echoed back to the
+  // client so the rendered card is labelled correctly.
+  const includeMakeup = parseBool(req.body?.includeMakeup, true)
+  const rawName = typeof req.body?.name === 'string' ? req.body.name.trim().slice(0, 60) : ''
+
   let raw: string
   try {
-    raw = await analyzeWithClaude(req.file.buffer, req.file.mimetype)
+    raw = await analyzeWithClaude(req.file.buffer, req.file.mimetype, { includeMakeup })
   } catch (err) {
     console.error('Claude CLI error:', err)
     res.status(500).json({ error: 'Analysis failed. Please try again.' })
@@ -145,7 +184,7 @@ app.post('/api/analyze', upload.single('photo'), async (req, res) => {
   } catch {
     // Retry once
     try {
-      raw = await analyzeWithClaude(req.file.buffer, req.file.mimetype)
+      raw = await analyzeWithClaude(req.file.buffer, req.file.mimetype, { includeMakeup })
       profile = parseProfile(raw)
     } catch {
       console.error('Parse failed after retry. Raw:', raw?.slice(0, 300))
@@ -156,6 +195,10 @@ app.post('/api/analyze', upload.single('photo'), async (req, res) => {
 
   const p = profile as Record<string, unknown>
   if (!p.analyzedAt) p.analyzedAt = new Date().toISOString().split('T')[0]
+  if (rawName) p.name = rawName
+  // Defensive: if Claude included makeup despite the opt-out, drop it so the
+  // client doesn't render a section the user explicitly hid.
+  if (!includeMakeup && 'makeup' in p) delete p.makeup
 
   res.json(profile)
 })

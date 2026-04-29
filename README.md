@@ -1,73 +1,38 @@
-# React + TypeScript + Vite
+# Style Analysis
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Personal color & style analysis web app. Anyone can upload a portrait, get a 12-season analysis with palette, hair recommendations, and (optionally) makeup. Past analyses persist per browser so multiple people sharing a device can keep their own results.
 
-Currently, two official plugins are available:
+## Run locally
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm install
+npm run server     # API on :3001
+npm run dev        # Frontend on :5173 (also boots the server via concurrently)
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+Open http://localhost:5173.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+The API uses the `claude` CLI (`--print` mode) to call Claude with vision; make sure you've authenticated it first (`claude config set apiKey ...`).
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## Architecture
+
+- `src/` — React + Vite frontend. State is purely client-side; analyses persist in `localStorage`.
+- `server.ts` — Express API. Stateless: it forwards uploaded photos to the Claude CLI, parses the JSON it returns, and echoes it back. Photos are written to a tmp file for the CLI to read and deleted immediately after.
+- `tests/e2e.ts` — End-to-end test that exercises both `includeMakeup=true` and `includeMakeup=false` branches, validates the schema, and verifies the `name` round-trip and the structural invariant that `makeup` is absent when opted out.
+
+## Multi-user model
+
+Each browser keeps its own list of analyses (capped at 30). There is no server-side user store — the analysis API is stateless. If you want shared/cross-device persistence, that's a future addition (would need auth + a database).
+
+## Run the e2e tests
+
+```bash
+npm run server &                          # API must be running
+npm run test:e2e -- ./path/to/portrait.jpg
 ```
+
+Two cases run back-to-back: full analysis (with makeup) and no-makeup analysis. Pass requires schema validity, name round-trip, and correct presence/absence of the makeup field.
+
+## Tech
+
+React 19 · Vite 8 · TypeScript 6 · Tailwind 4 · Express 5 · html2canvas (client-side card export)

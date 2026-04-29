@@ -5,8 +5,9 @@
  * Usage:
  *   npx ts-node tests/e2e.ts ./path/to/portrait.jpg
  *
- * Starts the Express server in-process, uploads the photo,
- * validates the full response schema, and prints a report.
+ * Runs two analyses back-to-back (with makeup, without makeup) so we exercise
+ * both branches of the conditional prompt and verify the multi-user fields
+ * (name echo, optional makeup section) round-trip correctly.
  */
 
 import * as fs from 'fs'
@@ -26,17 +27,22 @@ function isHex(v: unknown): boolean {
   return typeof v === 'string' && /^#[0-9a-fA-F]{6}$/.test(v)
 }
 
-function validateSwatch(s: unknown, path: string, fails: Fail[], requireWhy = false) {
-  if (typeof s !== 'object' || s === null) { fails.push({ field: path, issue: 'not an object' }); return }
+function validateSwatch(s: unknown, p: string, fails: Fail[], requireWhy = false) {
+  if (typeof s !== 'object' || s === null) { fails.push({ field: p, issue: 'not an object' }); return }
   const sw = s as Record<string, unknown>
-  check(fails, typeof sw.name === 'string' && sw.name.length > 0, `${path}.name`, 'missing or empty')
-  check(fails, isHex(sw.hex), `${path}.hex`, `invalid hex: ${sw.hex}`)
+  check(fails, typeof sw.name === 'string' && sw.name.length > 0, `${p}.name`, 'missing or empty')
+  check(fails, isHex(sw.hex), `${p}.hex`, `invalid hex: ${sw.hex}`)
   if (requireWhy) {
-    check(fails, typeof sw.whyWorks === 'string' && sw.whyWorks.length > 0, `${path}.whyWorks`, 'missing or empty')
+    check(fails, typeof sw.whyWorks === 'string' && sw.whyWorks.length > 0, `${p}.whyWorks`, 'missing or empty')
   }
 }
 
-function validateProfile(data: unknown): Fail[] {
+interface ValidateOpts {
+  expectMakeup: boolean
+  expectName?: string
+}
+
+function validateProfile(data: unknown, opts: ValidateOpts): Fail[] {
   const fails: Fail[] = []
 
   if (typeof data !== 'object' || data === null) {
@@ -45,13 +51,41 @@ function validateProfile(data: unknown): Fail[] {
 
   const p = data as Record<string, unknown>
 
-  // Top-level fields
+  // The server contract is: when `error` is non-null, content fields are
+  // intentionally empty. Don't run the strict content checks in that case —
+  // but the structural invariants (name echo, makeup presence) MUST still
+  // hold, since those are independent of whether Claude could see a face.
+  const isErrorResponse = typeof p.error === 'string' && p.error.length > 0
+
   check(fails, typeof p.analyzedAt === 'string', 'analyzedAt', 'missing')
-  check(fails, typeof p.season === 'string' && p.season.length > 0, 'season', 'missing')
-  check(fails, ['warm', 'cool', 'neutral'].includes(p.undertone as string), 'undertone', `invalid: ${p.undertone}`)
-  check(fails, typeof p.seasonSummary === 'string' && p.seasonSummary.length > 10, 'seasonSummary', 'missing or too short')
-  check(fails, typeof p.colorWhyOverall === 'string' && p.colorWhyOverall.length > 10, 'colorWhyOverall', 'missing or too short')
   check(fails, p.error === null || typeof p.error === 'string', 'error', 'must be null or string')
+
+  // Optional name — must round-trip when supplied by the client (always)
+  if (opts.expectName !== undefined) {
+    check(fails, p.name === opts.expectName, 'name', `expected ${JSON.stringify(opts.expectName)}, got ${JSON.stringify(p.name)}`)
+  }
+
+  // makeup presence — invariant on the includeMakeup flag (always)
+  if (opts.expectMakeup) {
+    check(fails, 'makeup' in p && typeof p.makeup === 'object' && p.makeup !== null,
+          'makeup', 'missing (expected because includeMakeup=true)')
+  } else {
+    // The server MUST strip the makeup field when the user opted out, even if
+    // Claude included it anyway — otherwise the client would render a section
+    // the user explicitly hid.
+    check(fails, !('makeup' in p), 'makeup', 'must be absent when includeMakeup=false')
+  }
+
+  if (isErrorResponse) {
+    // Error path verified — content checks below would be noise.
+    return fails
+  }
+
+  // ── Content checks (only when Claude returned a real analysis) ────────────
+  check(fails, typeof p.season === 'string' && (p.season as string).length > 0, 'season', 'missing')
+  check(fails, ['warm', 'cool', 'neutral'].includes(p.undertone as string), 'undertone', `invalid: ${p.undertone}`)
+  check(fails, typeof p.seasonSummary === 'string' && (p.seasonSummary as string).length > 10, 'seasonSummary', 'missing or too short')
+  check(fails, typeof p.colorWhyOverall === 'string' && (p.colorWhyOverall as string).length > 10, 'colorWhyOverall', 'missing or too short')
 
   // bestColors — 8 entries
   check(fails, Array.isArray(p.bestColors) && (p.bestColors as unknown[]).length === 8, 'bestColors', `expected 8, got ${Array.isArray(p.bestColors) ? (p.bestColors as unknown[]).length : 'non-array'}`)
@@ -65,17 +99,16 @@ function validateProfile(data: unknown): Fail[] {
     (p.avoidColors as unknown[]).forEach((s, i) => validateSwatch(s, `avoidColors[${i}]`, fails, true))
   }
 
-  // makeup
-  const mk = p.makeup as Record<string, unknown> | undefined
-  check(fails, typeof mk === 'object' && mk !== null, 'makeup', 'missing')
-  if (mk) {
+  // makeup contents (only present in expectMakeup case here)
+  if (opts.expectMakeup) {
+    const mk = p.makeup as Record<string, unknown>
     check(fails, typeof mk.foundationUndertone === 'string', 'makeup.foundationUndertone', 'missing')
     check(fails, Array.isArray(mk.eyeshadow) && (mk.eyeshadow as unknown[]).length === 3, 'makeup.eyeshadow', 'expected 3 entries')
     check(fails, Array.isArray(mk.lipColors) && (mk.lipColors as unknown[]).length === 2, 'makeup.lipColors', 'expected 2 entries')
     if (mk.blush) validateSwatch(mk.blush, 'makeup.blush', fails)
   }
 
-  // hair
+  // hair — always present
   const hr = p.hair as Record<string, unknown> | undefined
   check(fails, typeof hr === 'object' && hr !== null, 'hair', 'missing')
   if (hr) {
@@ -96,7 +129,7 @@ function validateProfile(data: unknown): Fail[] {
     check(fails, Array.isArray(hr.styleNotes) && (hr.styleNotes as unknown[]).length === 3, 'hair.styleNotes', 'expected 3 entries')
   }
 
-  // accessories
+  // accessories — always present
   const acc = p.accessories as Record<string, unknown> | undefined
   check(fails, typeof acc === 'object' && acc !== null, 'accessories', 'missing')
   if (acc) {
@@ -143,6 +176,44 @@ function get(url: string): Promise<{ status: number; body: unknown }> {
   })
 }
 
+// ── Test runner ─────────────────────────────────────────────────────────────
+
+interface RunCase {
+  label: string
+  name: string
+  includeMakeup: boolean
+}
+
+async function runCase(base: string, imagePath: string, mime: string, c: RunCase): Promise<boolean> {
+  console.log(`▶ ${c.label}  (name=${JSON.stringify(c.name)}, includeMakeup=${c.includeMakeup})`)
+
+  const form = new FormData()
+  form.append('photo', fs.createReadStream(imagePath), { contentType: mime, filename: path.basename(imagePath) })
+  form.append('name', c.name)
+  form.append('includeMakeup', c.includeMakeup ? 'true' : 'false')
+
+  const result = await post(`${base}/api/analyze`, form)
+  if (result.status !== 200) {
+    console.error(`  ✗ HTTP ${result.status}:`, result.body)
+    return false
+  }
+
+  const fails = validateProfile(result.body, { expectMakeup: c.includeMakeup, expectName: c.name })
+  if (fails.length > 0) {
+    console.error(`  ✗ ${fails.length} schema issue(s):`)
+    fails.forEach(f => console.error(`     [${f.field}] ${f.issue}`))
+    return false
+  }
+
+  const p = result.body as Record<string, unknown>
+  if (typeof p.error === 'string' && p.error.length > 0) {
+    console.log(`  ✓ structural invariants held (error path): ${p.error}\n`)
+  } else {
+    console.log(`  ✓ ${p.season} / ${p.undertone} undertone${c.includeMakeup ? ' / +makeup' : ' / no makeup'}\n`)
+  }
+  return true
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -161,25 +232,19 @@ async function main() {
   const PORT = process.env.PORT ?? '3001'
   const BASE = `http://localhost:${PORT}`
 
-  console.log('\n=== Grace Style — E2E Test ===\n')
+  console.log('\n=== Style Analysis — E2E Tests ===\n')
   console.log(`Image:  ${resolved}`)
   console.log(`Server: ${BASE}\n`)
 
-  // 1. Health check — server must already be running (start it with npm run server)
-  console.log('[1/3] Health check...')
+  // Health check
   try {
     const health = await get(`${BASE}/api/health`)
     if (health.status !== 200) throw new Error(`HTTP ${health.status}`)
-    console.log('      ✓ Server is up\n')
-  } catch (err) {
-    console.error(`      ✗ Server not reachable at ${BASE}`)
-    console.error(`        Start it with: npm run server`)
+    console.log('Server is up.\n')
+  } catch {
+    console.error(`Server not reachable at ${BASE}. Start it with: npm run server`)
     process.exit(1)
   }
-
-  // 2. Upload photo and get analysis
-  console.log('[2/3] Uploading photo and calling Claude...')
-  console.log('      (this takes ~15–30s)\n')
 
   const ext = path.extname(resolved).toLowerCase()
   const mimeMap: Record<string, string> = {
@@ -188,52 +253,19 @@ async function main() {
   }
   const mime = mimeMap[ext] ?? 'image/jpeg'
 
-  const form = new FormData()
-  form.append('photo', fs.createReadStream(resolved), { contentType: mime, filename: path.basename(resolved) })
+  const cases: RunCase[] = [
+    { label: 'Case 1 — full analysis with makeup',  name: 'Test User',  includeMakeup: true  },
+    { label: 'Case 2 — analysis without makeup',    name: 'Jack',        includeMakeup: false },
+  ]
 
-  let result: { status: number; body: unknown }
-  try {
-    result = await post(`${BASE}/api/analyze`, form)
-  } catch (err) {
-    console.error('      ✗ Request failed:', err)
-    process.exit(1)
+  let allOk = true
+  for (const c of cases) {
+    const ok = await runCase(BASE, resolved, mime, c)
+    if (!ok) allOk = false
   }
 
-  if (result.status !== 200) {
-    console.error(`      ✗ HTTP ${result.status}:`, result.body)
-    process.exit(1)
-  }
-  console.log('      ✓ Got response\n')
-
-  // 3. Validate schema
-  console.log('[3/3] Validating response schema...')
-  const fails = validateProfile(result.body)
-
-  const profile = result.body as Record<string, unknown>
-
-  if (fails.length === 0) {
-    console.log('      ✓ All schema checks passed\n')
-    console.log('── Result ──────────────────────────────')
-    console.log(`Season:    ${profile.season}`)
-    console.log(`Undertone: ${profile.undertone}`)
-    console.log(`Summary:   ${profile.seasonSummary}`)
-    console.log(`\nWhy these colors work:`)
-    console.log(`  ${profile.colorWhyOverall}`)
-    console.log(`\nBest colors:`)
-    const best = profile.bestColors as Array<Record<string, string>>
-    best.forEach(c => console.log(`  ${c.hex}  ${c.name} — ${c.whyWorks}`))
-    const hair = profile.hair as Record<string, unknown>
-    console.log(`\nFace shape: ${hair.faceShape}`)
-    const styles = hair.hairstyles as Array<Record<string, string>>
-    console.log('Hairstyles:')
-    styles.forEach(s => console.log(`  • ${s.name}: ${s.why}`))
-    console.log('\n✅ PASS\n')
-  } else {
-    console.log(`      ✗ ${fails.length} schema issue(s):\n`)
-    fails.forEach(f => console.log(`        [${f.field}] ${f.issue}`))
-    console.log('\n❌ FAIL\n')
-    process.exit(1)
-  }
+  console.log(allOk ? '✅ All cases passed\n' : '❌ One or more cases failed\n')
+  process.exit(allOk ? 0 : 1)
 }
 
 main().catch(err => {

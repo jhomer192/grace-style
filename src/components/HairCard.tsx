@@ -17,7 +17,8 @@ export function HairCard({ profile }: Props) {
       backgroundColor: '#faf8f5',
     })
     const link = document.createElement('a')
-    link.download = 'hair-analysis.png'
+    const slug = (profile.name || 'hair').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'hair'
+    link.download = `${slug}-hair-analysis.png`
     link.href = canvas.toDataURL('image/png')
     link.click()
   }
@@ -29,6 +30,9 @@ export function HairCard({ profile }: Props) {
         {/* Face shape */}
         <div className="flex items-center justify-between">
           <div>
+            {profile.name && (
+              <p className="text-stone-800 font-serif text-lg leading-tight mb-1">{profile.name}</p>
+            )}
             <h3 className="text-stone-700 font-semibold text-xs uppercase tracking-wider mb-1">Face Shape</h3>
             <span className="bg-amber-100 text-amber-800 px-3 py-0.5 rounded-full text-xs font-semibold capitalize">
               {profile.hair.faceShape}

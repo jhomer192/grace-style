@@ -4,9 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently \"npx ts-node --esm server.ts\" \"vite\"",
-    "server": "npx ts-node --esm server.ts",
-    "test:e2e": "npx ts-node tests/e2e.ts",
+    "dev": "concurrently \"npx tsx server.ts\" \"vite\"",
+    "server": "npx tsx server.ts",
+    "test:e2e": "npx tsx tests/e2e.ts",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview"

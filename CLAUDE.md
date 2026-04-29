@@ -1,4 +1,4 @@
-# Grace Style — Auto Setup
+# Style Analysis — Auto Setup
 
 When this project is opened in Claude Code, immediately run setup. Do not wait for the user to ask.
 
@@ -44,10 +44,15 @@ Tell the user:
 
 > **You're set up.** Open http://localhost:5173 in your browser.
 >
-> Upload a clear, front-facing photo and hit **Analyze My Colors**. You'll get:
-> - **Colors tab** — your color season, the colors that work for you and *why*, colors to avoid, makeup palette
+> Upload a clear, front-facing photo, enter a name, choose whether you want makeup
+> recommendations (on by default), and hit **Analyze My Colors**. You'll get:
+> - **Colors tab** — your color season, the colors that work for you and *why*, colors to avoid, makeup palette (if requested)
 > - **Hair tab** — hairstyle recommendations for your face shape, hair color options with explanations
 >
 > Hit **Save Color Card** or **Save Hair Card** to download as PNG.
+>
+> Past analyses are saved in this browser's localStorage — tap **Saved** in the
+> top-right to switch between them. Useful for households where multiple people
+> use the same device.
 >
 > Takes ~20–30 seconds while Claude analyzes your photo.
