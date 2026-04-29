@@ -35,4 +35,4 @@ Two cases run back-to-back: full analysis (with makeup) and no-makeup analysis. 
 
 ## Tech
 
-React 19 · Vite 8 · TypeScript 6 · Tailwind 4 · Express 5 · html2canvas (client-side card export)
+React 19 · Vite 8 · TypeScript 6 · Tailwind 4 · Express 5 · html-to-image (client-side card export)

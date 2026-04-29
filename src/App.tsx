@@ -190,17 +190,19 @@ export default function App() {
         {/* Results */}
         {profile && !loading && (
           <div className="space-y-4">
-            {/* Season badge */}
-            <div className="text-center">
+            {/* Editorial header — minimal here since the heavy treatment lives on the cards themselves */}
+            <div className="text-center space-y-1 py-2">
               {profile.name && (
-                <p className="text-stone-500 text-xs uppercase tracking-widest mb-1">{profile.name}'s analysis</p>
+                <p className="text-stone-500 text-[10px] uppercase tracking-[0.3em] font-medium">
+                  {profile.name}'s analysis
+                </p>
               )}
-              <div className="inline-block bg-amber-100 text-amber-800 px-5 py-1.5 rounded-full text-sm font-semibold tracking-widest uppercase mb-1">
+              <h2 className="font-serif text-stone-800 text-2xl tracking-tight">
                 {profile.season}
-              </div>
-              <div className="text-stone-500 text-xs mt-1">
-                {profile.undertone === 'warm' ? 'Warm' : profile.undertone === 'cool' ? 'Cool' : 'Neutral'} undertone
-              </div>
+              </h2>
+              <p className="text-stone-500 text-[10px] uppercase tracking-[0.25em]">
+                {profile.undertone} undertone
+              </p>
             </div>
 
             {/* Tabs */}

@@ -1,1 +1,35 @@
 @import "tailwindcss";
+
+/* Editorial typography — Playfair Display for display copy, Inter for everything else.
+   Tailwind's `font-serif` and `font-sans` are remapped so the existing utility classes
+   pick up the magazine aesthetic without us touching every component. */
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Playfair Display", ui-serif, Georgia, serif;
+  --font-display: "Playfair Display", ui-serif, Georgia, serif;
+}
+
+html, body {
+  font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Tracked-out small caps used heavily in section headers on the cards. */
+.label-caps {
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-weight: 500;
+}
+
+/* Hairline rule used as a section divider on the editorial cards. */
+.editorial-rule {
+  height: 1px;
+  background-image: linear-gradient(
+    to right,
+    transparent 0%,
+    currentColor 20%,
+    currentColor 80%,
+    transparent 100%
+  );
+}

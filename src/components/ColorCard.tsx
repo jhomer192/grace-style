@@ -1,133 +1,390 @@
 import { useRef } from 'react'
 import type { StyleProfile } from '../types'
-import { SwatchChip } from './SwatchChip'
 
 interface Props {
   profile: StyleProfile
   photo: string
 }
 
+/**
+ * Pick a foreground color (near-black or off-white) that contrasts with `hex`,
+ * using the WCAG luminance formula. Used so paint-chip labels stay legible
+ * against any palette color the model returns.
+ */
+function readableInk(hex: string): string {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex)
+  if (!m) return '#1c1917'
+  const n = parseInt(m[1], 16)
+  const r = (n >> 16) & 0xff
+  const g = (n >> 8) & 0xff
+  const b = n & 0xff
+  const lin = (c: number) => {
+    const s = c / 255
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4)
+  }
+  const L = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+  return L > 0.5 ? '#1c1917' : '#fdfcf9'
+}
+
+/** Format an analyzedAt ISO string as `MAY 2026` for the magazine masthead. */
+function masthead(iso: string): string {
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return ''
+  return d
+    .toLocaleString('en-US', { month: 'long', year: 'numeric' })
+    .toUpperCase()
+}
+
+/** A single paint-chip swatch — color block on top, label band below. */
+function PaintChip({
+  hex,
+  name,
+  whyWorks,
+  muted = false,
+  showHex = true,
+}: {
+  hex: string
+  name: string
+  whyWorks?: string
+  muted?: boolean
+  showHex?: boolean
+}) {
+  const ink = readableInk(hex)
+  return (
+    <div
+      className={`relative rounded-md overflow-hidden shadow-[0_1px_2px_rgba(0,0,0,0.06)] ${
+        muted ? 'opacity-60' : ''
+      }`}
+    >
+      <div className="aspect-[4/5] flex flex-col">
+        {/* Color block — takes ~70% of chip height */}
+        <div className="flex-1 relative" style={{ backgroundColor: hex }}>
+          {showHex && (
+            <span
+              className="absolute top-1.5 right-1.5 text-[8px] font-medium tracking-wider"
+              style={{ color: ink, opacity: 0.7 }}
+            >
+              {hex.toUpperCase()}
+            </span>
+          )}
+        </div>
+        {/* Label band — cream-on-cream so the color stays the hero */}
+        <div className="bg-white/90 px-1.5 py-1.5">
+          <p className="text-stone-800 text-[10px] font-medium leading-tight font-serif">
+            {name}
+          </p>
+          {whyWorks && (
+            <p className="text-stone-500 text-[8px] leading-snug mt-0.5 line-clamp-2">
+              {whyWorks}
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function ColorCard({ profile, photo }: Props) {
   const cardRef = useRef<HTMLDivElement>(null)
 
+  // Hero accent: pull from the first best color so each analysis has its own
+  // signature tint. Fall back to a warm cream if for some reason the array is empty.
+  const accent = profile.bestColors[0]?.hex ?? '#c9a679'
+  const accentInk = readableInk(accent)
+
   const download = async () => {
     if (!cardRef.current) return
-    const html2canvas = (await import('html2canvas')).default
-    const canvas = await html2canvas(cardRef.current, {
-      scale: 3,
-      useCORS: true,
-      backgroundColor: '#faf8f5',
+    // We use html-to-image (SVG foreignObject) instead of html2canvas because
+    // html2canvas 1.4.1 chokes on Tailwind 4's oklch() color values.
+    const { toPng } = await import('html-to-image')
+    const dataUrl = await toPng(cardRef.current, {
+      pixelRatio: 3,
+      cacheBust: true,
+      backgroundColor: '#f7f2ea',
     })
     const link = document.createElement('a')
-    const slug = (profile.name || 'color').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'color'
+    const slug =
+      (profile.name || 'color')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '') || 'color'
     link.download = `${slug}-color-analysis.png`
-    link.href = canvas.toDataURL('image/png')
+    link.href = dataUrl
     link.click()
   }
 
   return (
     <div className="space-y-3">
-      {/* Downloadable card */}
-      <div ref={cardRef} className="bg-[#faf8f5] rounded-3xl p-5 space-y-5 border border-stone-100">
+      {/* Downloadable card — fixed 9:16-ish portrait frame for IG-story / Threads sharing. */}
+      <div
+        ref={cardRef}
+        className="relative rounded-2xl overflow-hidden shadow-[0_8px_28px_rgba(120,90,40,0.10)]"
+        style={{
+          background:
+            'radial-gradient(circle at 50% 0%, #fbf6ee 0%, #f7f2ea 55%, #f1eade 100%)',
+        }}
+      >
+        {/* Decorative accent strip across the very top */}
+        <div className="h-1.5 w-full" style={{ backgroundColor: accent }} />
 
-        {/* Header with photo */}
-        <div className="flex items-center gap-4">
-          <img
-            src={photo}
-            alt={profile.name ? `${profile.name}'s portrait` : 'Your portrait'}
-            className="w-16 h-16 rounded-2xl object-cover border-2 border-white shadow-md flex-shrink-0"
-          />
-          <div>
+        <div className="px-6 pt-5 pb-6 space-y-6">
+          {/* ── Masthead ─────────────────────────────────────────────────── */}
+          <div className="flex items-center justify-between text-[9px] tracking-[0.22em] text-stone-500 font-medium">
+            <span>STYLE&nbsp;ANALYSIS</span>
+            <span className="flex items-center gap-2">
+              <span
+                className="inline-block w-1.5 h-1.5 rounded-full"
+                style={{ backgroundColor: accent }}
+              />
+              VOL.&nbsp;01
+            </span>
+            <span>{masthead(profile.analyzedAt)}</span>
+          </div>
+
+          {/* ── Hero ─────────────────────────────────────────────────────── */}
+          <div className="text-center space-y-3 pt-1">
+            {/* Circular portrait with accent ring */}
+            <div className="flex justify-center">
+              <div
+                className="rounded-full p-[3px]"
+                style={{
+                  background: `conic-gradient(from 180deg, ${accent}, #e9dcc6, ${accent})`,
+                }}
+              >
+                <img
+                  src={photo}
+                  alt={profile.name ? `${profile.name}'s portrait` : 'Your portrait'}
+                  className="w-24 h-24 rounded-full object-cover border-[3px] border-[#fbf6ee]"
+                />
+              </div>
+            </div>
+
             {profile.name && (
-              <p className="text-stone-800 font-serif text-lg leading-tight mb-0.5">{profile.name}</p>
+              <p className="font-serif italic text-stone-600 text-base">
+                {profile.name}
+              </p>
             )}
-            <div className="inline-block bg-amber-100 text-amber-800 px-3 py-0.5 rounded-full text-xs font-semibold tracking-widest uppercase mb-1">
-              {profile.season}
+
+            {/* Season — magazine cover treatment */}
+            <div className="space-y-1">
+              <div className="flex items-center justify-center gap-3 text-stone-400">
+                <span
+                  className="h-px w-6"
+                  style={{ backgroundColor: accent, opacity: 0.5 }}
+                />
+                <span className="text-[9px] tracking-[0.3em] font-medium">
+                  YOUR SEASON
+                </span>
+                <span
+                  className="h-px w-6"
+                  style={{ backgroundColor: accent, opacity: 0.5 }}
+                />
+              </div>
+              <h2 className="font-serif text-stone-800 text-[34px] leading-[1.05] tracking-tight">
+                {profile.season}
+              </h2>
+              <p className="text-[10px] tracking-[0.2em] uppercase text-stone-500 font-medium">
+                {profile.undertone === 'warm'
+                  ? 'Warm undertone'
+                  : profile.undertone === 'cool'
+                    ? 'Cool undertone'
+                    : 'Neutral undertone'}
+              </p>
             </div>
-            <p className="text-stone-600 text-xs leading-relaxed">{profile.seasonSummary}</p>
+
+            <p className="font-serif italic text-stone-600 text-[13px] leading-snug max-w-[280px] mx-auto pt-1">
+              {profile.seasonSummary}
+            </p>
           </div>
-        </div>
 
-        {/* Why these colors work */}
-        <div className="bg-amber-50 rounded-2xl p-4">
-          <h3 className="text-amber-800 font-semibold text-xs uppercase tracking-wider mb-2">Why These Colors Work</h3>
-          <p className="text-stone-600 text-xs leading-relaxed">{profile.colorWhyOverall}</p>
-        </div>
+          {/* ── Why these colors work ───────────────────────────────────── */}
+          <div
+            className="rounded-xl px-4 py-3"
+            style={{
+              backgroundColor: `${accent}14`,
+              borderLeft: `2px solid ${accent}`,
+            }}
+          >
+            <p
+              className="text-[9px] label-caps mb-1"
+              style={{ color: accent, filter: 'brightness(0.7)' }}
+            >
+              The thread that ties it together
+            </p>
+            <p className="text-stone-700 text-[11px] leading-relaxed">
+              {profile.colorWhyOverall}
+            </p>
+          </div>
 
-        {/* Best colors */}
-        <div>
-          <h3 className="text-stone-700 font-semibold text-xs uppercase tracking-wider mb-3">Colors That Love You</h3>
-          <div className="grid grid-cols-4 gap-3">
-            {profile.bestColors.map(c => (
-              <div key={c.hex} className="flex flex-col items-center gap-1.5">
-                <SwatchChip swatch={c} size="lg" />
-                {c.whyWorks && (
-                  <p className="text-stone-400 text-[10px] text-center leading-tight">{c.whyWorks}</p>
-                )}
+          {/* ── Palette ─────────────────────────────────────────────────── */}
+          <section className="space-y-3">
+            <div className="flex items-center gap-3 text-stone-400">
+              <div
+                className="editorial-rule flex-1"
+                style={{ color: accent, opacity: 0.4 }}
+              />
+              <h3 className="text-stone-700 text-[10px] label-caps">
+                Wear&nbsp;This
+              </h3>
+              <div
+                className="editorial-rule flex-1"
+                style={{ color: accent, opacity: 0.4 }}
+              />
+            </div>
+
+            <div className="grid grid-cols-4 gap-1.5">
+              {profile.bestColors.map(c => (
+                <PaintChip
+                  key={c.hex + c.name}
+                  hex={c.hex}
+                  name={c.name}
+                  whyWorks={c.whyWorks}
+                />
+              ))}
+            </div>
+          </section>
+
+          {/* ── Avoid ───────────────────────────────────────────────────── */}
+          <section className="space-y-3">
+            <div className="flex items-center gap-3 text-stone-400">
+              <div
+                className="editorial-rule flex-1"
+                style={{ color: '#a8a29e', opacity: 0.4 }}
+              />
+              <h3 className="text-stone-500 text-[10px] label-caps">
+                Skip&nbsp;These
+              </h3>
+              <div
+                className="editorial-rule flex-1"
+                style={{ color: '#a8a29e', opacity: 0.4 }}
+              />
+            </div>
+
+            <div className="grid grid-cols-4 gap-1.5">
+              {profile.avoidColors.map(c => (
+                <PaintChip
+                  key={c.hex + c.name}
+                  hex={c.hex}
+                  name={c.name}
+                  whyWorks={c.whyWorks}
+                  muted
+                />
+              ))}
+            </div>
+          </section>
+
+          {/* ── Makeup (opt-in) ─────────────────────────────────────────── */}
+          {profile.makeup && (
+            <section className="space-y-3">
+              <div className="flex items-center gap-3 text-stone-400">
+                <div
+                  className="editorial-rule flex-1"
+                  style={{ color: accent, opacity: 0.4 }}
+                />
+                <h3 className="text-stone-700 text-[10px] label-caps">
+                  Makeup
+                </h3>
+                <div
+                  className="editorial-rule flex-1"
+                  style={{ color: accent, opacity: 0.4 }}
+                />
               </div>
-            ))}
-          </div>
-        </div>
 
-        {/* Avoid */}
-        <div>
-          <h3 className="text-stone-400 font-semibold text-xs uppercase tracking-wider mb-3">Colors to Skip</h3>
-          <div className="grid grid-cols-4 gap-3">
-            {profile.avoidColors.map(c => (
-              <div key={c.hex} className="flex flex-col items-center gap-1.5">
-                <SwatchChip swatch={c} size="md" muted />
-                {c.whyWorks && (
-                  <p className="text-stone-300 text-[10px] text-center leading-tight">{c.whyWorks}</p>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
+              <p className="font-serif italic text-stone-600 text-[12px] text-center leading-snug">
+                {profile.makeup.foundationUndertone}
+              </p>
 
-        {/* Makeup — only when the user opted in on upload */}
-        {profile.makeup && (
-          <div>
-            <h3 className="text-stone-700 font-semibold text-xs uppercase tracking-wider mb-3">Makeup</h3>
-            <p className="text-stone-500 text-xs mb-3">{profile.makeup.foundationUndertone}</p>
-            <div className="grid grid-cols-3 gap-3">
-              <div>
-                <p className="text-stone-400 text-[10px] uppercase tracking-wide mb-2">Eyes</p>
-                <div className="flex gap-1.5 flex-wrap">
-                  {profile.makeup.eyeshadow.map(c => <SwatchChip key={c.hex} swatch={c} size="sm" />)}
+              <div className="grid grid-cols-3 gap-3">
+                <div className="text-center space-y-2">
+                  <p className="text-stone-400 text-[9px] label-caps">Eyes</p>
+                  <div className="flex justify-center gap-1">
+                    {profile.makeup.eyeshadow.map(c => (
+                      <div
+                        key={c.hex + c.name}
+                        className="w-6 h-6 rounded-full border-2 border-white shadow-sm"
+                        style={{ backgroundColor: c.hex }}
+                        title={c.name}
+                      />
+                    ))}
+                  </div>
+                </div>
+                <div className="text-center space-y-2">
+                  <p className="text-stone-400 text-[9px] label-caps">Lips</p>
+                  <div className="flex justify-center gap-1">
+                    {profile.makeup.lipColors.map(c => (
+                      <div
+                        key={c.hex + c.name}
+                        className="w-6 h-6 rounded-full border-2 border-white shadow-sm"
+                        style={{ backgroundColor: c.hex }}
+                        title={c.name}
+                      />
+                    ))}
+                  </div>
+                </div>
+                <div className="text-center space-y-2">
+                  <p className="text-stone-400 text-[9px] label-caps">Blush</p>
+                  <div className="flex justify-center">
+                    <div
+                      className="w-6 h-6 rounded-full border-2 border-white shadow-sm"
+                      style={{ backgroundColor: profile.makeup.blush.hex }}
+                      title={profile.makeup.blush.name}
+                    />
+                  </div>
                 </div>
               </div>
-              <div>
-                <p className="text-stone-400 text-[10px] uppercase tracking-wide mb-2">Lips</p>
-                <div className="flex gap-1.5 flex-wrap">
-                  {profile.makeup.lipColors.map(c => <SwatchChip key={c.hex} swatch={c} size="sm" />)}
-                </div>
-              </div>
-              <div>
-                <p className="text-stone-400 text-[10px] uppercase tracking-wide mb-2">Blush</p>
-                <SwatchChip swatch={profile.makeup.blush} size="sm" />
-              </div>
-            </div>
-          </div>
-        )}
+            </section>
+          )}
 
-        {/* Accessories */}
-        <div>
-          <h3 className="text-stone-700 font-semibold text-xs uppercase tracking-wider mb-2">Accessories</h3>
-          <div className="flex gap-2 flex-wrap">
-            <span className="bg-stone-100 text-stone-600 text-xs px-3 py-1 rounded-full capitalize">{profile.accessories.metalTone} metals</span>
-            {profile.accessories.jewelryStyle.map(j => (
-              <span key={j} className="bg-stone-100 text-stone-600 text-xs px-3 py-1 rounded-full capitalize">{j}</span>
-            ))}
+          {/* ── Accessories ─────────────────────────────────────────────── */}
+          <section className="space-y-3">
+            <div className="flex items-center gap-3 text-stone-400">
+              <div
+                className="editorial-rule flex-1"
+                style={{ color: accent, opacity: 0.4 }}
+              />
+              <h3 className="text-stone-700 text-[10px] label-caps">
+                Accessories
+              </h3>
+              <div
+                className="editorial-rule flex-1"
+                style={{ color: accent, opacity: 0.4 }}
+              />
+            </div>
+
+            <div className="flex flex-wrap justify-center gap-1.5">
+              <span
+                className="text-[10px] px-3 py-1 rounded-full font-medium tracking-wide capitalize"
+                style={{ backgroundColor: accent, color: accentInk }}
+              >
+                {profile.accessories.metalTone}&nbsp;metals
+              </span>
+              {profile.accessories.jewelryStyle.map(j => (
+                <span
+                  key={j}
+                  className="text-stone-700 text-[10px] px-3 py-1 rounded-full font-medium tracking-wide capitalize bg-white border border-stone-200"
+                >
+                  {j}
+                </span>
+              ))}
+            </div>
+          </section>
+
+          {/* ── Footer masthead ─────────────────────────────────────────── */}
+          <div className="pt-2 flex items-center justify-between text-[8px] tracking-[0.25em] text-stone-400 font-medium">
+            <span>{profile.name ? profile.name.toUpperCase() : 'YOUR'}&nbsp;·&nbsp;COLOR</span>
+            <span
+              className="inline-block w-1.5 h-1.5 rounded-full"
+              style={{ backgroundColor: accent, opacity: 0.7 }}
+            />
+            <span>GRACE-STYLE.APP</span>
           </div>
         </div>
-
-        <p className="text-center text-[10px] text-stone-300">grace-style.app</p>
       </div>
 
-      {/* Download button */}
+      {/* Download button — outside the captured card */}
       <button
         onClick={download}
-        className="w-full py-3 rounded-2xl bg-stone-100 text-stone-600 text-sm font-medium hover:bg-stone-200 active:scale-[0.98] transition-all"
+        className="w-full py-3 rounded-2xl bg-stone-800 text-white text-sm font-medium hover:bg-stone-700 active:scale-[0.98] transition-all"
       >
         Save Color Card
       </button>
