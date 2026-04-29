@@ -34,7 +34,6 @@ export function HairCard({ profile }: Props) {
   // Hair colors drive the accent — gives the card its own identity vs. the
   // color card, which keys off the bestColors palette.
   const accent = profile.hair.colorOptions[0]?.hex ?? '#9b7653'
-  const accentInk = readableInk(accent)
 
   const download = async () => {
     if (!cardRef.current) return
@@ -143,6 +142,36 @@ export function HairCard({ profile }: Props) {
                       {style.name}
                     </p>
                   </div>
+
+                  {/* Example reference photo. Only renders when the server
+                      successfully enriched the recommendation via Pexels —
+                      otherwise the card stays text-only as before. */}
+                  {style.exampleImageUrl && (
+                    <div className="mb-2 rounded-lg overflow-hidden border border-stone-100 bg-stone-50">
+                      <img
+                        src={style.exampleImageUrl}
+                        alt={`Reference photo: ${style.name}`}
+                        className="w-full h-40 object-cover"
+                        loading="lazy"
+                        crossOrigin="anonymous"
+                      />
+                      {style.imageCredit && (
+                        <p className="text-[8px] tracking-wide text-stone-400 px-2 py-1 italic">
+                          Photo by{' '}
+                          <a
+                            href={style.imageCredit.sourceUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="underline decoration-stone-300 hover:text-stone-600"
+                          >
+                            {style.imageCredit.photographer}
+                          </a>{' '}
+                          on Pexels
+                        </p>
+                      )}
+                    </div>
+                  )}
+
                   <p className="text-stone-600 text-[11px] leading-snug mb-1.5">
                     {style.description}
                   </p>

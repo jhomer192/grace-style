@@ -1,3 +1,4 @@
+import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'
 import multer from 'multer'
@@ -61,7 +62,7 @@ Return this exact schema:
   "hair": {
     "faceShape": "<oval | round | square | heart | oblong | diamond>",
     "hairstyles": [
-      { "name": "<style name>", "description": "<what it looks like — length, layers, texture>", "why": "<why this flatters their face shape and coloring>" }
+      { "name": "<style name>", "description": "<what it looks like — length, layers, texture>", "why": "<why this flatters their face shape and coloring>", "imageSearchQuery": "<a 4–8 word stock-photo search phrase that bakes in apparent age range, gender presentation, race/ethnicity, and hair texture, plus the haircut name — e.g. 'south asian man textured crop haircut' or 'black woman shoulder length curly bob'. Be specific about demographics so the example photo actually matches the person>" }
     ],
     "colorOptions": [
       { "name": "<color name>", "hex": "<#xxxxxx>", "whyWorks": "<why this hair color suits their season and skin tone>" }
@@ -82,6 +83,7 @@ ${makeupRequirements}- hair.hairstyles: exactly 3 entries
 - hair.colorOptions: exactly 3 entries
 - hair.styleNotes: exactly 3 entries
 - accessories.jewelryStyle: exactly 3 entries
+- Every hairstyles entry MUST include imageSearchQuery — be demographically specific so the photo actually resembles the person
 - All hex codes must be valid 6-digit hex strings starting with #
 - Tailor recommendations to the apparent person in the photo without assuming gender from any single feature — base advice on their actual coloring, face shape, and existing styling.
 - If you cannot clearly see the person's face, set error to a brief explanation and fill other fields with empty/default values`
@@ -173,6 +175,114 @@ function parseProfile(raw: string): unknown {
   return JSON.parse(cleaned)
 }
 
+/** Persisted Pexels lookup cache. Keyed by lowercased search query so two
+ *  users requesting the same haircut on the same demographic don't both
+ *  burn an API request. Stored as a flat JSON object on disk so it survives
+ *  server restarts but stays trivial to inspect / clear. */
+interface PexelsCacheEntry {
+  url: string
+  photographer: string
+  sourceUrl: string
+}
+
+const PEXELS_CACHE_PATH = path.join(os.tmpdir(), 'grace-style-pexels-cache.json')
+
+function loadPexelsCache(): Record<string, PexelsCacheEntry> {
+  try {
+    return JSON.parse(fs.readFileSync(PEXELS_CACHE_PATH, 'utf8'))
+  } catch {
+    return {}
+  }
+}
+
+function savePexelsCache(cache: Record<string, PexelsCacheEntry>): void {
+  try {
+    fs.writeFileSync(PEXELS_CACHE_PATH, JSON.stringify(cache))
+  } catch (err) {
+    // Cache failures are non-fatal — next request will just re-query.
+    console.warn('Could not persist Pexels cache:', err)
+  }
+}
+
+/**
+ * Fetch one example image from Pexels for a given search query. Returns
+ * `null` (not throws) on any failure so missing imagery never blocks the
+ * analysis itself — the UI just renders the text-only recommendation.
+ *
+ * Pexels' free tier: 200/hour, 20k/month, no card required.
+ * Sign up at pexels.com/api → instant key → set PEXELS_API_KEY in .env.
+ */
+async function fetchPexelsImage(
+  query: string,
+  cache: Record<string, PexelsCacheEntry>,
+): Promise<PexelsCacheEntry | null> {
+  const key = query.trim().toLowerCase()
+  if (!key) return null
+  if (cache[key]) return cache[key]
+
+  const apiKey = process.env.PEXELS_API_KEY
+  if (!apiKey) return null
+
+  try {
+    const url = `https://api.pexels.com/v1/search?query=${encodeURIComponent(query)}&per_page=1&orientation=portrait`
+    const res = await fetch(url, { headers: { Authorization: apiKey } })
+    if (!res.ok) {
+      console.warn(`Pexels ${res.status} for "${query}"`)
+      return null
+    }
+    const data = await res.json() as {
+      photos?: Array<{
+        src: { large: string; medium: string }
+        photographer: string
+        url: string
+      }>
+    }
+    const photo = data.photos?.[0]
+    if (!photo) return null
+
+    const entry: PexelsCacheEntry = {
+      url: photo.src.large || photo.src.medium,
+      photographer: photo.photographer,
+      sourceUrl: photo.url,
+    }
+    cache[key] = entry
+    return entry
+  } catch (err) {
+    console.warn(`Pexels fetch failed for "${query}":`, err)
+    return null
+  }
+}
+
+/**
+ * Enrich each hairstyle in the profile with an example photo URL. Runs the
+ * Pexels lookups in parallel — they're independent and the page already
+ * paid the latency tax for the Claude analysis itself.
+ */
+async function enrichHairstylesWithImages(profile: Record<string, unknown>): Promise<void> {
+  const hair = profile.hair as { hairstyles?: Array<Record<string, unknown>> } | undefined
+  if (!hair?.hairstyles?.length) return
+
+  const cache = loadPexelsCache()
+  const before = JSON.stringify(cache)
+
+  await Promise.all(
+    hair.hairstyles.map(async (h) => {
+      const q = typeof h.imageSearchQuery === 'string' ? h.imageSearchQuery : ''
+      if (!q) return
+      const result = await fetchPexelsImage(q, cache)
+      if (result) {
+        h.exampleImageUrl = result.url
+        h.imageCredit = {
+          photographer: result.photographer,
+          sourceUrl: result.sourceUrl,
+        }
+      }
+    }),
+  )
+
+  if (JSON.stringify(cache) !== before) savePexelsCache(cache)
+}
+
 /**
  * Coerce a multipart text field to a boolean. Accepts "true"/"false",
  * "1"/"0", "on"/"off". Defaults to fallback for missing or unrecognised input.
@@ -244,6 +354,14 @@ app.post('/api/analyze', upload.array('photo', MAX_PHOTOS), async (req, res) => 
   // Defensive: if Claude included makeup despite the opt-out, drop it so the
   // client doesn't render a section the user explicitly hid.
   if (!includeMakeup && 'makeup' in p) delete p.makeup
+
+  // Enrich hairstyles with Pexels example photos. Non-fatal — if the API
+  // key is missing or any lookup fails, we just ship the text-only profile.
+  try {
+    await enrichHairstylesWithImages(p)
+  } catch (err) {
+    console.warn('Hair image enrichment failed:', err)
+  }
 
   res.json(profile)
 })

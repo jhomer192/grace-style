@@ -8,6 +8,18 @@ export interface Hairstyle {
   name: string
   description: string
   why: string
+  /** Optimized search phrase Claude crafted for stock-photo lookup —
+   *  bakes in apparent age, gender presentation, race, and hair texture
+   *  so the example photo actually matches the person being analyzed. */
+  imageSearchQuery?: string
+  /** Direct image URL from the stock provider (Pexels). Server-enriched.
+   *  Absent when PEXELS_API_KEY is unset or no match was returned. */
+  exampleImageUrl?: string
+  /** Attribution required by Pexels' terms of use. */
+  imageCredit?: {
+    photographer: string
+    sourceUrl: string
+  }
 }
 
 export interface MakeupProfile {
