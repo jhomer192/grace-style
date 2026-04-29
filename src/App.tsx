@@ -171,8 +171,8 @@ export default function App() {
     <div className="min-h-screen bg-[#faf8f5] font-sans">
       {/* Header */}
       <header className="relative text-center pt-10 pb-6 px-4">
-        <h1 className="text-4xl font-serif text-stone-800 tracking-tight mb-1">Style Analysis</h1>
-        <p className="text-stone-500 text-sm">Personal color & style analysis — for everyone</p>
+        <h1 className="text-4xl font-serif text-stone-800 tracking-tight mb-1">Personal Palette Generator</h1>
+        <p className="text-stone-500 text-sm">Color & style analysis — for everyone</p>
 
         {/* Saved analyses trigger. Hidden when empty so first-run isn't cluttered. */}
         {analyses.length > 0 && (
