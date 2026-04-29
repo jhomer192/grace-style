@@ -1,10 +1,31 @@
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import type { StyleProfile } from '../types'
 import { MakeupMockup } from './MakeupMockup'
 
 interface Props {
   profile: StyleProfile
   photo: string
+}
+
+type Fit = 'boxy' | 'slim'
+type Gender = 'mens' | 'womens'
+
+/**
+ * Build a Google Shopping search URL for a t-shirt of a given color, fit,
+ * and gender. Google Shopping is multi-retailer (Amazon, Uniqlo, J.Crew,
+ * Target, etc. all surface in one results page), takes color names as plain
+ * English, and requires no API key. The query string just packs in the
+ * descriptors — the relevance is whatever Google's shopping index decides.
+ *
+ * Why not Amazon-only: locking to one retailer narrows price + style range
+ * a lot, especially for less common colors. Multi-retailer search lets the
+ * user pick whatever shop they trust.
+ */
+function shopUrl(colorName: string, fit: Fit, gender: Gender): string {
+  const fitWord = fit === 'boxy' ? 'boxy oversized' : 'slim fit fitted'
+  const genderWord = gender === 'mens' ? "men's" : "women's"
+  const q = `${colorName} ${fitWord} t-shirt ${genderWord}`
+  return `https://www.google.com/search?tbm=shop&q=${encodeURIComponent(q)}`
 }
 
 /**
@@ -36,57 +57,133 @@ function masthead(iso: string): string {
     .toUpperCase()
 }
 
-/** A single paint-chip swatch — color block on top, label band below. */
+/** Two-option pill toggle used for the fit and gender selectors. Kept tiny
+ *  and inline so the editorial card doesn't grow a chunky form-control look. */
+function SegToggle<T extends string>({
+  accent,
+  value,
+  options,
+  onChange,
+}: {
+  accent: string
+  value: T
+  options: ReadonlyArray<{ v: T; label: string }>
+  onChange: (v: T) => void
+}) {
+  return (
+    <div className="inline-flex rounded-full bg-white border border-stone-200 p-0.5">
+      {options.map(opt => {
+        const active = opt.v === value
+        return (
+          <button
+            key={opt.v}
+            type="button"
+            onClick={() => onChange(opt.v)}
+            className={`px-2.5 py-1 rounded-full text-[10px] tracking-wide font-medium transition-colors ${
+              active
+                ? 'text-white shadow-sm'
+                : 'text-stone-500 hover:text-stone-700'
+            }`}
+            style={active ? { backgroundColor: accent } : undefined}
+          >
+            {opt.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+/** A single paint-chip swatch — color block on top, label band below.
+ *  When `href` is set the whole chip becomes a clickable link (opens in a
+ *  new tab) so users can shop the color in one tap. */
 function PaintChip({
   hex,
   name,
   whyWorks,
   muted = false,
   showHex = true,
+  href,
 }: {
   hex: string
   name: string
   whyWorks?: string
   muted?: boolean
   showHex?: boolean
+  href?: string
 }) {
   const ink = readableInk(hex)
-  return (
-    <div
-      className={`relative rounded-md overflow-hidden shadow-[0_1px_2px_rgba(0,0,0,0.06)] ${
-        muted ? 'opacity-60' : ''
-      }`}
-    >
-      <div className="aspect-[4/5] flex flex-col">
-        {/* Color block — takes ~70% of chip height */}
-        <div className="flex-1 relative" style={{ backgroundColor: hex }}>
-          {showHex && (
-            <span
-              className="absolute top-1.5 right-1.5 text-[8px] font-medium tracking-wider"
-              style={{ color: ink, opacity: 0.7 }}
-            >
-              {hex.toUpperCase()}
-            </span>
-          )}
-        </div>
-        {/* Label band — cream-on-cream so the color stays the hero */}
-        <div className="bg-white/90 px-1.5 py-1.5">
-          <p className="text-stone-800 text-[10px] font-medium leading-tight font-serif">
-            {name}
+
+  const inner = (
+    <div className="aspect-[4/5] flex flex-col">
+      {/* Color block — takes ~70% of chip height */}
+      <div className="flex-1 relative" style={{ backgroundColor: hex }}>
+        {showHex && (
+          <span
+            className="absolute top-1.5 right-1.5 text-[8px] font-medium tracking-wider"
+            style={{ color: ink, opacity: 0.7 }}
+          >
+            {hex.toUpperCase()}
+          </span>
+        )}
+        {href && (
+          /* Subtle "shop" affordance on hover so the chip reads as
+             interactive without cluttering the editorial layout. */
+          <span
+            className="absolute bottom-1 left-1 text-[7.5px] font-medium tracking-[0.18em] uppercase rounded-full px-1.5 py-0.5 backdrop-blur-sm"
+            style={{
+              color: ink,
+              backgroundColor: ink === '#1c1917' ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.35)',
+            }}
+          >
+            Shop ↗
+          </span>
+        )}
+      </div>
+      {/* Label band — cream-on-cream so the color stays the hero */}
+      <div className="bg-white/90 px-1.5 py-1.5">
+        <p className="text-stone-800 text-[10px] font-medium leading-tight font-serif">
+          {name}
+        </p>
+        {whyWorks && (
+          <p className="text-stone-500 text-[8px] leading-snug mt-0.5 line-clamp-2">
+            {whyWorks}
           </p>
-          {whyWorks && (
-            <p className="text-stone-500 text-[8px] leading-snug mt-0.5 line-clamp-2">
-              {whyWorks}
-            </p>
-          )}
-        </div>
+        )}
       </div>
     </div>
   )
+
+  const baseClass = `relative rounded-md overflow-hidden shadow-[0_1px_2px_rgba(0,0,0,0.06)] ${
+    muted ? 'opacity-60' : ''
+  } ${href ? 'block transition-transform hover:scale-[1.03] hover:shadow-md' : ''}`
+
+  if (href) {
+    return (
+      <a
+        href={href}
+        target="_blank"
+        rel="noreferrer"
+        aria-label={`Shop ${name} t-shirts`}
+        className={baseClass}
+      >
+        {inner}
+      </a>
+    )
+  }
+  return <div className={baseClass}>{inner}</div>
 }
 
 export function ColorCard({ profile, photo }: Props) {
   const cardRef = useRef<HTMLDivElement>(null)
+  // Shop-link controls. These pin the per-chip Google Shopping URL to the
+  // user's actual silhouette + gender preference rather than guessing — so
+  // a man who wears boxy tees gets boxy men's results and not a generic
+  // unisex search. The state is local because it shouldn't persist across
+  // analyses (Gary's preference != Grace's), but it does survive tab
+  // switches because the component instance lives across them.
+  const [fit, setFit] = useState<Fit>('boxy')
+  const [gender, setGender] = useState<Gender>('mens')
 
   // Hero accent: pull from the first best color so each analysis has its own
   // signature tint. Fall back to a warm cream if for some reason the array is empty.
@@ -233,6 +330,29 @@ export function ColorCard({ profile, photo }: Props) {
               />
             </div>
 
+            {/* Fit + gender toggles. Each chip's shop link rebuilds from
+                these so the search query matches the user's actual taste. */}
+            <div className="flex items-center justify-center gap-2 text-[10px]">
+              <SegToggle
+                accent={accent}
+                value={fit}
+                options={[
+                  { v: 'boxy', label: 'Boxy' },
+                  { v: 'slim', label: 'Slim' },
+                ]}
+                onChange={setFit}
+              />
+              <SegToggle
+                accent={accent}
+                value={gender}
+                options={[
+                  { v: 'mens', label: "Men's" },
+                  { v: 'womens', label: "Women's" },
+                ]}
+                onChange={setGender}
+              />
+            </div>
+
             <div className="grid grid-cols-4 gap-1.5">
               {profile.bestColors.map(c => (
                 <PaintChip
@@ -240,9 +360,14 @@ export function ColorCard({ profile, photo }: Props) {
                   hex={c.hex}
                   name={c.name}
                   whyWorks={c.whyWorks}
+                  href={shopUrl(c.name, fit, gender)}
                 />
               ))}
             </div>
+
+            <p className="text-center text-stone-400 text-[9px] tracking-wide italic">
+              Tap a swatch to shop t-shirts in that color
+            </p>
           </section>
 
           {/* ── Avoid ───────────────────────────────────────────────────── */}
