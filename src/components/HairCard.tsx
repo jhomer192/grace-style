@@ -143,9 +143,10 @@ export function HairCard({ profile }: Props) {
                     </p>
                   </div>
 
-                  {/* Example reference photo. Only renders when the server
-                      successfully enriched the recommendation via Pexels —
-                      otherwise the card stays text-only as before. */}
+                  {/* Inline reference photo from Pexels — only shows when
+                      the server has a PEXELS_API_KEY set. Otherwise we just
+                      surface the Google Images link below, which is free and
+                      arguably better (a wall of options vs one stock photo). */}
                   {style.exampleImageUrl && (
                     <div className="mb-2 rounded-lg overflow-hidden border border-stone-100 bg-stone-50">
                       <img
@@ -176,11 +177,33 @@ export function HairCard({ profile }: Props) {
                     {style.description}
                   </p>
                   <p
-                    className="text-[10px] leading-snug italic font-serif"
+                    className="text-[10px] leading-snug italic font-serif mb-2"
                     style={{ color: accent, filter: 'brightness(0.7)' }}
                   >
                     {style.why}
                   </p>
+
+                  {/* Always-on "see examples" link. Uses the demographic-
+                      tuned imageSearchQuery Claude already generated, falling
+                      back to "<style name> haircut" if the model omitted it.
+                      Google Images returns more options than any single
+                      stock photo could, so even with Pexels active this is
+                      the better source for "show me this on real people". */}
+                  <a
+                    href={`https://www.google.com/search?tbm=isch&q=${encodeURIComponent(
+                      style.imageSearchQuery || `${style.name} haircut`,
+                    )}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 text-[10px] font-medium tracking-wide rounded-full px-2.5 py-1 border transition-colors"
+                    style={{
+                      borderColor: `${accent}55`,
+                      color: accent,
+                      filter: 'brightness(0.85)',
+                    }}
+                  >
+                    See examples ↗
+                  </a>
                 </div>
               ))}
             </div>
